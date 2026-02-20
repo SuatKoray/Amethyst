@@ -47,3 +47,39 @@ class AmethystSimulator:
         except Exception as e:
             # Fail-safe mekanizması: Programın çökmesini engeller
             print(f"[HATA] Şifreleme veya disk I/O işlemi başarısız: {e}")
+
+    def start(self):
+        """
+        Simülatörü başlatır ve periyodik I/O döngüsüne girer.
+        """
+        print(f"[*] Project Amethyst - Kırmızı Takım Simülatörü Başlatıldı.")
+        print(f"[*] Kriptografik Motor: Aktif (AES-Fernet)")
+        print(f"[*] Hedef Dosya: {self.log_path}")
+        print(f"[*] Üretilen Şifreleme Anahtarı (Analiz için): {self.encryption_key.decode('utf-8')}")
+        print(f"[*] Çıkmak için 'Ctrl+C' tuşlarına basın...\n")
+
+        try:
+            while self.is_running:
+                # 1. Sahte veri üret
+                dummy_data = self._generate_dummy_data()
+                
+                # 2. Şifrele ve diske yaz (Mavi Takım aracını tetikleyecek hareket)
+                self._encrypt_and_write(dummy_data)
+                
+                # 3. Belirlenen süre kadar bekle (I/O Optimizasyonu)
+                time.sleep(self.interval)
+        except KeyboardInterrupt:
+            self.stop()
+
+    def stop(self):
+        """
+        Güvenli çıkış (Graceful Shutdown)
+        """
+        print("\n[!] Kullanıcı tarafından manuel kesinti algılandı. Simülasyon sonlandırılıyor...")
+        self.is_running = False
+
+if __name__ == "__main__":
+    # Simülatörü 2 saniyede bir gizli I/O işlemi yapacak şekilde başlatıyoruz.
+    # Bu sıklık, Blue Team aracımızın davranışsal analiz eşiğini aşması için idealdir.
+    simulator = AmethystSimulator(interval=2)
+    simulator.start()
