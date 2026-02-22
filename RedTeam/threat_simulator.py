@@ -80,6 +80,5 @@ class AmethystSimulator:
 
 if __name__ == "__main__":
     # Simülatörü 2 saniyede bir gizli I/O işlemi yapacak şekilde başlatıyoruz.
-    # Bu sıklık, Blue Team aracımızın davranışsal analiz eşiğini aşması için idealdir.
     simulator = AmethystSimulator(interval=2)
     simulator.start()
