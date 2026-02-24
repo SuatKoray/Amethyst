@@ -26,12 +26,15 @@ class AmethystSimulator:
         try:
             encrypted_data = self.cipher_suite.encrypt(data.encode('utf-8'))
             target_file = self._get_dynamic_filepath()
+            
+            # KASITLI AÇIK TUTMA: Gerçek fidye yazılımları gibi dosyayı uzun süre kilitli tutuyoruz.
             with open(target_file, "ab") as f:
                 f.write(encrypted_data + b"\n")
-                f.flush()  # Veriyi RAM'de bekletmeden anında diske yazdırır (Mavi Takımı uyandırır)
-                time.sleep(0.5)  # EDR'ın süreci yakalaması için dosyayı yarım saniye açık tutar (Race Condition'ı çözer)
+                f.flush()  # RAM'den diske zorla yaz
+                time.sleep(3.0)  # Mavi takıma süreci yakalaması için KESİN 3 saniye veriyoruz
+                
         except Exception as e:
-            print(f"[HATA] Disk I/O işlemi başarısız: {e}")
+            pass
 
     def start(self):
         print(f"[*] Project Amethyst - Kırmızı Takım (APT Modu) Başlatıldı.")
