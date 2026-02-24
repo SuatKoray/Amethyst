@@ -14,13 +14,11 @@ class AmethystSimulator:
         self.cipher_suite = Fernet(self.encryption_key)
 
     def _generate_dummy_data(self):
-        # Entropi hesaplamasını güçlendirmek için veri boyutunu artırdık
         length = random.randint(50, 200) 
         dummy_text = ''.join(random.choices(string.ascii_letters + string.digits + " ", k=length))
         return f"[DUMMY_INPUT] {dummy_text}\n"
 
     def _get_dynamic_filepath(self):
-        # Polimorfik Davranış: Statik imza tespitinden kaçmak için rastgele uzantılar
         ext = random.choice([".bin", ".dat", ".tmp", ".cache"])
         return os.path.join(self.log_directory, f"{self.base_filename}{ext}")
 
@@ -30,6 +28,8 @@ class AmethystSimulator:
             target_file = self._get_dynamic_filepath()
             with open(target_file, "ab") as f:
                 f.write(encrypted_data + b"\n")
+                f.flush()  # Veriyi RAM'de bekletmeden anında diske yazdırır (Mavi Takımı uyandırır)
+                time.sleep(0.5)  # EDR'ın süreci yakalaması için dosyayı yarım saniye açık tutar (Race Condition'ı çözer)
         except Exception as e:
             print(f"[HATA] Disk I/O işlemi başarısız: {e}")
 
@@ -44,7 +44,6 @@ class AmethystSimulator:
                 dummy_data = self._generate_dummy_data()
                 self._encrypt_and_write(dummy_data)
                 
-                # Jitter (Zaman Sapması): 1.5 ile 3.5 saniye arası rastgele bekleme
                 sleep_time = random.uniform(1.5, 3.5)
                 time.sleep(sleep_time)
         except KeyboardInterrupt:
@@ -55,7 +54,6 @@ class AmethystSimulator:
         self.is_running = False
 
 if __name__ == "__main__":
-    # Log dizinini dinamik olarak bul
     target_directory = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
     simulator = AmethystSimulator(log_directory=target_directory)
     simulator.start()

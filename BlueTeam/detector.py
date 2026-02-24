@@ -4,7 +4,7 @@ import json
 import math
 import psutil
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
@@ -99,7 +99,7 @@ class AmethystDetector:
         self.processed_alerts.add(alert_hash)
 
         alert_data = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "alert_type": "High_Entropy_IO_Detected",
             "severity": "CRITICAL",
             "details": {
