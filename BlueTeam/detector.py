@@ -22,13 +22,11 @@ def calculate_entropy(file_path):
         return 0.0
 
 def get_file_hash(file_path):
-    """Bulunan zararlı sürecin SHA-256 özetini (Hash) çıkarır."""
     if not file_path or not os.path.exists(file_path):
         return "Bulunamadı"
     try:
         sha256_hash = hashlib.sha256()
         with open(file_path, "rb") as f:
-            # Belleği doldurmamak için dosyayı 4KB'lık bloklar halinde okur
             for byte_block in iter(lambda: f.read(4096), b""):
                 sha256_hash.update(byte_block)
         return sha256_hash.hexdigest()
@@ -44,8 +42,6 @@ class FIMEventHandler(FileSystemEventHandler):
             self.detector.analyze_event(event.src_path)
             
     def on_created(self, event):
-        # Kırmızı takım artık rastgele isimlerde dosyalar yarattığı için
-        # yeni oluşan (created) dosyaları da izliyoruz.
         if not event.is_directory:
             self.detector.analyze_event(event.src_path)
 
@@ -58,17 +54,16 @@ class AmethystDetector:
 
     def analyze_event(self, filepath):
         current_entropy = calculate_entropy(filepath)
-        
-        # Ekranı spamlamamak için sadece eşiği aşanları yakala
         if current_entropy < self.entropy_threshold:
             return
-            
         self._hunt_process(filepath, current_entropy)
 
     def _hunt_process(self, filepath, entropy):
         suspect_pid = None
         suspect_name = "Gizlenmiş_Süreç"
         suspect_exe = None
+        network_info = "Bağlantı_Yok / Yerel"
+        action_taken = "İzleniyor"
         
         try:
             for proc in psutil.process_iter(['pid', 'name', 'exe']):
@@ -78,7 +73,25 @@ class AmethystDetector:
                         if os.path.abspath(f.path) == os.path.abspath(filepath):
                             suspect_pid = proc.info['pid']
                             suspect_name = proc.info['name']
-                            suspect_exe = proc.info['exe'] # Orijinal executable yolunu al
+                            suspect_exe = proc.info['exe']
+                            
+                            # 1. AĞ AVI (C2 Tespiti): Sürecin o anki TCP/IP bağlantılarını çek
+                            try:
+                                conns = proc.connections(kind='inet')
+                                if conns:
+                                    remote_ip = conns[0].raddr.ip if conns[0].raddr else "Bilinmiyor"
+                                    remote_port = conns[0].raddr.port if conns[0].raddr else "Bilinmiyor"
+                                    network_info = f"{remote_ip}:{remote_port}"
+                            except psutil.AccessDenied:
+                                network_info = "Erişim_Engellendi"
+
+                            # 2. AKTİF MÜDAHALE (Kill Switch): Zararlının kafasını kopar!
+                            try:
+                                proc.kill()
+                                action_taken = "SÜREÇ ÖLDÜRÜLDÜ (Terminated)"
+                            except psutil.AccessDenied:
+                                action_taken = "Öldürme Başarısız (Yönetici İzni Gerekli)"
+                            
                             break
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
@@ -87,12 +100,10 @@ class AmethystDetector:
         except Exception:
             pass
 
-        # Yakalanan zararlının SHA-256 özetini hesapla
         suspect_hash = get_file_hash(suspect_exe)
-        self._generate_alert(filepath, suspect_pid, suspect_name, suspect_hash, entropy)
+        self._generate_alert(filepath, suspect_pid, suspect_name, suspect_hash, network_info, action_taken, entropy)
 
-    def _generate_alert(self, filepath, pid, name, process_hash, entropy):
-        # Aynı saniye içindeki tekrarları filtrele
+    def _generate_alert(self, filepath, pid, name, process_hash, net_info, action, entropy):
         alert_hash = f"{filepath}_{math.floor(time.time() / 2)}"
         if alert_hash in self.processed_alerts:
             return
@@ -100,7 +111,7 @@ class AmethystDetector:
 
         alert_data = {
             "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            "alert_type": "High_Entropy_IO_Detected",
+            "alert_type": "Ransomware_Behavior_Detected",
             "severity": "CRITICAL",
             "details": {
                 "target_file": filepath,
@@ -108,6 +119,8 @@ class AmethystDetector:
                 "suspect_process": name,
                 "suspect_pid": pid,
                 "process_sha256": process_hash,
+                "network_c2": net_info,
+                "edr_action": action,
                 "mitre_tactic": "TA0040 / T1486"
             }
         }
@@ -115,17 +128,20 @@ class AmethystDetector:
         with open(self.alert_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(alert_data) + "\n")
             
-        print(f"\n[!!!] DEFANSİF ALARM: Kriptografik G/Ç İşlemi Yakalandı!")
-        print(f"      Hedef Dosya   : {filepath}")
-        print(f"      Entropi Skoru : {round(entropy, 2)} / 8.0 (Kritik)")
-        print(f"      Şüpheli Süreç : {name} (PID: {pid})")
-        print(f"      Adli Hash     : {process_hash}")
+        print(f"\n[!!!] DEFANSİF ALARM: Şifreleme İşlemi (Ransomware) Yakalandı!")
+        print(f"      Hedef Dosya    : {filepath}")
+        print(f"      Entropi Skoru  : {round(entropy, 2)} / 8.0")
+        print(f"      Şüpheli Süreç  : {name} (PID: {pid})")
+        print(f"      Adli Hash      : {process_hash}")
+        print(f"      Ağ Bağlantısı  : {net_info}")
+        print(f"      EDR Müdahalesi : {action}")
 
     def start(self):
         print(f"[*] Project Amethyst - Mavi Takım Motoru Başlatıldı.")
         print(f"[*] İzlenen Dizin: {self.watch_dir}")
         print(f"[*] Entropi Alarm Eşiği: {self.entropy_threshold}")
-        print(f"[*] Adli Bilişim: SHA-256 Process Hashing Aktif")
+        print(f"[*] Adli Bilişim: SHA-256 Hashing ve TCP/IP Ağ Taraması Aktif")
+        print(f"[*] Aktif Müdahale: Zararlı Süreçleri Otomatik Öldürme (Kill-Switch) Aktif")
         print(f"[*] Kapatmak için 'Ctrl+C' tuşlarına basın...\n")
         
         os.makedirs(self.watch_dir, exist_ok=True)
