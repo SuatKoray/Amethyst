@@ -59,8 +59,8 @@ $$H(X) = - \sum_{i=0}^{255} P(x_i) \log_2 P(x_i)$$
 
     ```bash
 
-   git clone [https://github.com/SuatKoray/Project-Amethyst.git](https://github.com/SuatKoray/Project-Amethyst.git)
-   cd Project-Amethyst
+   git clone [https://github.com/SuatKoray/Amethyst.git](https://github.com/SuatKoray/Amethyst.git)
+   cd Amethyst
    
    ```
    
