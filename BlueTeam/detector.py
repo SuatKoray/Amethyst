@@ -4,6 +4,7 @@ import json
 import math
 import psutil
 import hashlib
+import yara
 from datetime import datetime, timezone
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -37,18 +38,37 @@ class FIMEventHandler(FileSystemEventHandler):
         if not event.is_directory: self.detector.analyze_event(event.src_path)
 
 class AmethystDetector:
-    def __init__(self, watch_dir, alert_file="blue_team_alerts.json"):
+    def __init__(self, watch_dir, yara_rule_path, alert_file="blue_team_alerts.json"):
         self.watch_dir = watch_dir
         self.alert_file = alert_file
         self.entropy_threshold = 5.5
         self.processed_alerts = set()
         self.last_alert_time = {}
+        
+        # YARA Motorunu Derle ve Yükle
+        self.yara_rules = None
+        if os.path.exists(yara_rule_path):
+            try:
+                self.yara_rules = yara.compile(filepath=yara_rule_path)
+                print(f"[*] YARA Motoru: Kurallar başarıyla yüklendi.")
+            except Exception as e:
+                print(f"[!] YARA Derleme Hatası: {e}")
 
     def analyze_event(self, filepath):
         time.sleep(0.1)
         
         current_entropy = calculate_entropy(filepath)
-        if current_entropy < self.entropy_threshold: 
+        
+        # YARA Taraması
+        yara_matches = []
+        if self.yara_rules and os.path.exists(filepath):
+            try:
+                matches = self.yara_rules.match(filepath)
+                yara_matches = [m.rule for m in matches]
+            except Exception: pass
+
+        # Entropi yüksekse VEYA YARA bir imza bulduysa avı başlat
+        if current_entropy < self.entropy_threshold and not yara_matches: 
             return
 
         current_time = time.time()
@@ -56,21 +76,18 @@ class AmethystDetector:
             return
         self.last_alert_time[filepath] = current_time
 
-        self._hunt_process(filepath, current_entropy)
+        self._hunt_process(filepath, current_entropy, yara_matches)
 
-    def _hunt_process(self, filepath, entropy):
+    def _hunt_process(self, filepath, entropy, yara_matches):
         suspect_pid, suspect_name, suspect_exe = None, "Gizlenmiş_Süreç", None
         network_info, action_taken = "Bağlantı_Yok / Yerel", "İzleniyor"
         target_filename = os.path.basename(filepath).lower()
         
         all_procs = list(psutil.process_iter(['pid', 'name', 'exe']))
-        
         def risk_score(p):
             name = str(p.info.get('name', '')).lower()
-            if any(risk in name for risk in ['python', 'powershell', 'cmd', 'java', 'ruby', 'node']):
-                return 0
+            if any(risk in name for risk in ['python', 'powershell', 'cmd', 'java', 'ruby', 'node']): return 0
             return 1
-
         all_procs.sort(key=risk_score) 
 
         for proc in all_procs:
@@ -78,8 +95,7 @@ class AmethystDetector:
                 if proc.info['name'] and proc.info['name'].lower() in [
                     'system', 'registry', 'svchost.exe', 'smss.exe', 
                     'csrss.exe', 'lsass.exe', 'services.exe', 'wininit.exe', 'explorer.exe'
-                ]:
-                    continue
+                ]: continue
                     
                 files = proc.open_files()
                 for f in files:
@@ -87,91 +103,69 @@ class AmethystDetector:
                         suspect_pid = proc.info['pid']
                         suspect_name = proc.info['name']
                         suspect_exe = proc.info.get('exe', 'Bulunamadı')
-                        
                         try:
                             conns = proc.net_connections(kind='inet')
                             if conns:
                                 remote_ip = conns[0].raddr.ip if conns[0].raddr else "Bilinmiyor"
                                 remote_port = conns[0].raddr.port if conns[0].raddr else "Bilinmiyor"
                                 network_info = f"{remote_ip}:{remote_port}"
-                        except Exception:
-                            network_info = "Erişim_Engellendi"
+                        except Exception: network_info = "Erişim_Engellendi"
 
                         try:
                             proc.kill()
                             action_taken = "SÜREÇ ÖLDÜRÜLDÜ (Terminated)"
-                        except Exception:
-                            action_taken = "Öldürme Başarısız (Yönetici İzni Gerekli)"
+                        except Exception: action_taken = "Öldürme Başarısız (Yönetici İzni Gerekli)"
                         break
-            except Exception:
-                continue
-            
-            if suspect_pid: 
-                break
+            except Exception: continue
+            if suspect_pid: break
 
         suspect_hash = get_file_hash(suspect_exe)
-        self._generate_alert(filepath, suspect_pid, suspect_name, suspect_hash, network_info, action_taken, entropy)
+        self._generate_alert(filepath, suspect_pid, suspect_name, suspect_hash, network_info, action_taken, entropy, yara_matches)
 
-    def _generate_alert(self, filepath, pid, name, process_hash, net_info, action, entropy):
+    def _generate_alert(self, filepath, pid, name, process_hash, net_info, action, entropy, yara_matches):
         alert_hash = f"{filepath}_{math.floor(time.time() / 2)}"
         if alert_hash in self.processed_alerts: return
         self.processed_alerts.add(alert_hash)
 
-        # SIEM ve SOC Ekipleri için Elastic Common Schema (ECS) Formatında Log
+        yara_str = ", ".join(yara_matches) if yara_matches else "Temiz (Sadece Davranışsal Analiz)"
+
         alert_data = {
             "@timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "event": {
-                "kind": "alert",
-                "category": ["malware", "intrusion_detection"],
-                "type": ["info"],
-                "action": action,
-                "severity": 90,
-                "module": "amethyst_edr"
+                "kind": "alert", "category": ["malware", "intrusion_detection"],
+                "type": ["info"], "action": action, "severity": 90, "module": "amethyst_edr"
             },
             "threat": {
-                "technique": {
-                    "id": "T1486",
-                    "name": "Data Encrypted for Impact"
-                },
-                "indicator": {
-                    "type": "file",
-                    "file": {
-                        "hash": {"sha256": process_hash}
-                    }
-                }
+                "technique": {"id": "T1486", "name": "Data Encrypted for Impact"},
+                "indicator": {"type": "file", "yara_signatures": yara_matches, "file": {"hash": {"sha256": process_hash}}}
             },
-            "process": {
-                "pid": pid,
-                "name": name,
-                "executable": name
-            },
+            "process": {"pid": pid, "name": name, "executable": name},
             "file": {
-                "path": filepath,
-                "extension": os.path.splitext(filepath)[1].replace(".", ""),
-                "attributes": {
-                    "shannon_entropy": round(entropy, 2)
-                }
+                "path": filepath, "extension": os.path.splitext(filepath)[1].replace(".", ""),
+                "attributes": {"shannon_entropy": round(entropy, 2)}
             },
             "network": {
-                "direction": "outbound",
-                "destination": {"address": net_info.split(":")[0] if ":" in net_info else "local"}
+                "direction": "outbound", "destination": {"address": net_info.split(":")[0] if ":" in net_info else "local"}
             }
         }
         
-        with open(self.alert_file, "a", encoding="utf-8") as f: 
-            f.write(json.dumps(alert_data) + "\n")
+        with open(self.alert_file, "a", encoding="utf-8") as f: f.write(json.dumps(alert_data) + "\n")
         
-        print(f"\n[!!!] DEFANSİF ALARM: Şifreleme İşlemi (Ransomware) Yakalandı!")
+        print(f"\n[!!!] DEFANSİF ALARM: Şifreleme İşlemi Yakalandı!")
         print(f"      Hedef Dosya    : {filepath}\n      Entropi Skoru  : {round(entropy, 2)} / 8.0")
+        print(f"      YARA Eşleşmesi : {yara_str}")
         print(f"      Şüpheli Süreç  : {name} (PID: {pid})\n      Adli Hash      : {process_hash}")
-        print(f"      Ağ Bağlantısı  : {net_info}\n      EDR Müdahalesi : {action}")
+        print(f"      EDR Müdahalesi : {action}")
 
 if __name__ == "__main__":
     print(f"[*] Project Amethyst - Mavi Takım Motoru Başlatıldı.")
-    print(f"[*] Mimari Güncelleme: LOLBins Tehdit Önceliklendirmesi Aktif")
-    print(f"[*] Loglama: SIEM / Elastic Common Schema (ECS) Formatı Aktif")
+    print(f"[*] Mimari Güncelleme: HİBRİT EDR (Davranışsal Entropi + Statik YARA) Aktif")
+    print(f"[*] Loglama: SIEM / Elastic Common Schema (ECS) Formatı Aktif\n")
+    
     target_directory = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
-    detector = AmethystDetector(watch_dir=target_directory)
+    yara_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "rules", "ransomware.yar")
+    
+    detector = AmethystDetector(watch_dir=target_directory, yara_rule_path=yara_path)
     
     os.makedirs(detector.watch_dir, exist_ok=True)
     observer = Observer()
