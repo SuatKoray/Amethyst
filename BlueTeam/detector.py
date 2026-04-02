@@ -63,17 +63,15 @@ class AmethystDetector:
         network_info, action_taken = "Bağlantı_Yok / Yerel", "İzleniyor"
         target_filename = os.path.basename(filepath).lower()
         
-        # 1. PROFESYONEL EDR MİMARİSİ: LOLBins Prioritization (Riskli Süreçleri Öne Al)
         all_procs = list(psutil.process_iter(['pid', 'name', 'exe']))
         
         def risk_score(p):
             name = str(p.info.get('name', '')).lower()
-            # Betik dilleri ve komut satırları fidye yazılımlarının taşıyıcısıdır, İLK BUNLARI TARA!
             if any(risk in name for risk in ['python', 'powershell', 'cmd', 'java', 'ruby', 'node']):
                 return 0
             return 1
 
-        all_procs.sort(key=risk_score) # Python süreçleri artık listenin en başında!
+        all_procs.sort(key=risk_score) 
 
         for proc in all_procs:
             try:
@@ -83,7 +81,6 @@ class AmethystDetector:
                 ]:
                     continue
                     
-                # 2. HATA YUTMA ÇÖZÜMÜ: Eğer open_files() Windows tarafından engellenirse sadece O SÜRECİ atla.
                 files = proc.open_files()
                 for f in files:
                     if os.path.basename(f.path).lower() == target_filename:
@@ -107,7 +104,6 @@ class AmethystDetector:
                             action_taken = "Öldürme Başarısız (Yönetici İzni Gerekli)"
                         break
             except Exception:
-                # DÖNGÜYÜ KIRMA (break yapma), HATALI SÜRECİ ATLAYIP DİĞERİNE GEÇ!
                 continue
             
             if suspect_pid: 
@@ -121,17 +117,49 @@ class AmethystDetector:
         if alert_hash in self.processed_alerts: return
         self.processed_alerts.add(alert_hash)
 
+        # SIEM ve SOC Ekipleri için Elastic Common Schema (ECS) Formatında Log
         alert_data = {
-            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            "alert_type": "Ransomware_Behavior_Detected",
-            "severity": "CRITICAL",
-            "details": {
-                "target_file": filepath, "entropy_score": round(entropy, 2),
-                "suspect_process": name, "suspect_pid": pid, "process_sha256": process_hash,
-                "network_c2": net_info, "edr_action": action, "mitre_tactic": "TA0040 / T1486"
+            "@timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "event": {
+                "kind": "alert",
+                "category": ["malware", "intrusion_detection"],
+                "type": ["info"],
+                "action": action,
+                "severity": 90,
+                "module": "amethyst_edr"
+            },
+            "threat": {
+                "technique": {
+                    "id": "T1486",
+                    "name": "Data Encrypted for Impact"
+                },
+                "indicator": {
+                    "type": "file",
+                    "file": {
+                        "hash": {"sha256": process_hash}
+                    }
+                }
+            },
+            "process": {
+                "pid": pid,
+                "name": name,
+                "executable": name
+            },
+            "file": {
+                "path": filepath,
+                "extension": os.path.splitext(filepath)[1].replace(".", ""),
+                "attributes": {
+                    "shannon_entropy": round(entropy, 2)
+                }
+            },
+            "network": {
+                "direction": "outbound",
+                "destination": {"address": net_info.split(":")[0] if ":" in net_info else "local"}
             }
         }
-        with open(self.alert_file, "a", encoding="utf-8") as f: f.write(json.dumps(alert_data) + "\n")
+        
+        with open(self.alert_file, "a", encoding="utf-8") as f: 
+            f.write(json.dumps(alert_data) + "\n")
         
         print(f"\n[!!!] DEFANSİF ALARM: Şifreleme İşlemi (Ransomware) Yakalandı!")
         print(f"      Hedef Dosya    : {filepath}\n      Entropi Skoru  : {round(entropy, 2)} / 8.0")
@@ -140,7 +168,8 @@ class AmethystDetector:
 
 if __name__ == "__main__":
     print(f"[*] Project Amethyst - Mavi Takım Motoru Başlatıldı.")
-    print(f"[*] Mimari Güncelleme: LOLBins Tehdit Önceliklendirmesi (100% Catch Rate) Aktif")
+    print(f"[*] Mimari Güncelleme: LOLBins Tehdit Önceliklendirmesi Aktif")
+    print(f"[*] Loglama: SIEM / Elastic Common Schema (ECS) Formatı Aktif")
     target_directory = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
     detector = AmethystDetector(watch_dir=target_directory)
     
